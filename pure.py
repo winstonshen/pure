@@ -1,8 +1,9 @@
 import sys, os
-from PySide2.QtWidgets import QApplication, QWidget, QLabel, QFrame, QHBoxLayout, QVBoxLayout, QSystemTrayIcon, QSlider, QMenu, QAction
+from PySide2.QtWidgets import QApplication, QWidget, QLabel, QFrame, QHBoxLayout, QVBoxLayout, QSystemTrayIcon, QSlider, QMenu, QAction, QStackedWidget
 from PySide2.QtGui import QPixmap, QIcon
 from PySide2.QtCore import Qt, QUrl, Signal, QPoint
 from PySide2.QtMultimedia import QMediaPlayer, QMediaPlaylist
+
 
 SOUND_LIST = []
 PATH_LIST = []
@@ -19,6 +20,12 @@ for file_name in user_list:
 DEFAULT_COUNT = len(default_list)
 SOUND_COUNT = len(PATH_LIST)
 
+SHOW_HELP = True
+config_file = open('./.config', 'r')
+if config_file.readline()[8:9] == '1':
+    SHOW_HELP = False
+config_file.close()
+
 
 class Player(QMediaPlayer):
     global PATH_LIST
@@ -32,7 +39,170 @@ class Player(QMediaPlayer):
         self.play_list.setCurrentIndex(0)
 
         self.setPlaylist(self.play_list)
-        self.setVolume(50)
+        self.setVolume(65)
+
+
+class HeartCheck(QLabel):
+    checked_signal = Signal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_checked = False
+        self.setPixmap(QPixmap('./img/icon_hollow_16.png'))
+
+    def mouseReleaseEvent(self, event):
+        if self.is_checked:
+            self.setPixmap(QPixmap('./img/icon_hollow_16.png'))
+            self.is_checked = False
+        else:
+            self.setPixmap(QPixmap('./img/icon_16.png'))
+            self.is_checked = True
+        self.checked_signal.emit(self.is_checked)
+
+
+class HelpNavigator(QLabel):
+    next_signal = Signal(int)
+    close_signal = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.current_index = 0
+        self.setPixmap(QPixmap('./img/right.png'))
+        self.setFixedSize(25, 25)
+
+    def mouseReleaseEvent(self, event):
+        if self.current_index < 2:
+            self.current_index += 1
+            self.next_signal.emit(self.current_index)
+        elif self.current_index < 3:
+            self.setPixmap(QPixmap('./img/close.png'))
+            self.current_index += 1
+            self.next_signal.emit(self.current_index)
+        else:
+            self.close_signal.emit()
+
+
+class TextDisplay(QStackedWidget):
+    noticed_checked = Signal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        welcome_text = '你好，我是清心。\n\n在专心写作、高效工作或者放空自己的时候，\n你可能会需要我。'
+        guide_text = '如果需要我隐藏起来，或者暂时不需要我了，\n你可以双击或者中键单击系统托盘处我的图标让我隐藏或者退出。'
+        personal_text = '对了，你也可以把自己喜欢的音频放在sound文件夹下。\n下次见面时，我就可以播放它们了。'
+        end_text = '很高兴认识你。'
+
+        self.welcome_label = QLabel(welcome_text, self)
+        self.guide_label = QLabel(guide_text, self)
+        self.personal_label = QLabel(personal_text, self)
+
+        self.welcome_label.setWordWrap(True)
+        self.welcome_label.setAlignment(Qt.AlignTop)
+        self.guide_label.setWordWrap(True)
+        self.guide_label.setAlignment(Qt.AlignTop)
+        self.personal_label.setWordWrap(True)
+        self.personal_label.setAlignment(Qt.AlignTop)
+
+        self.end_frame = QFrame(self)
+        self.end_label = QLabel(end_text, self.end_frame)
+        self.noticed_check = HeartCheck(self.end_frame)
+        self.noticed_label = QLabel('好的，我知道了。', self.end_frame)
+
+        self.end_label.setAlignment(Qt.AlignCenter)
+
+        end_hbox = QHBoxLayout()
+        end_hbox.addWidget(self.noticed_check)
+        end_hbox.addWidget(self.noticed_label)
+        end_hbox.addStretch(1)
+        end_hbox.setSpacing(10)
+
+        end_vbox = QVBoxLayout()
+        end_vbox.addWidget(self.end_label)
+        end_vbox.addSpacing(20)
+        end_vbox.addLayout(end_hbox)
+
+        self.end_frame.setLayout(end_vbox)
+
+        self.addWidget(self.welcome_label)
+        self.addWidget(self.guide_label)
+        self.addWidget(self.personal_label)
+        self.addWidget(self.end_frame)
+
+        self.noticed_check.checked_signal.connect(self.noticed_checked)
+
+
+class HelpPad(QWidget):
+    help_qss = '''
+        QFrame{
+            background-color: rgb(242, 244, 246);
+            font: rgb(51, 51, 51);
+            font-family: SimHei;
+            font-size: 16px;}
+        TextDisplay{
+            margin-left: 10px;
+            margin-right: 8px;}
+        QFrame#top_bar{
+            background-color: rgb(11, 162, 154);
+            border-bottom: 1px solid gray;}
+            '''
+
+    def __init__(self, application: QApplication):
+        super().__init__()
+
+        self.app = application
+        width = self.app.desktop().availableGeometry().width()
+        height = self.app.desktop().availableGeometry().height()
+        self.move(width - 210, height - 255)
+
+        self.noticed = False
+
+        self.setFixedSize(180, 180)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+
+        self.central_frame = QFrame(self)
+        self.central_frame.setFixedSize(180, 180)
+
+        self.top_bar = QFrame(self.central_frame)
+        self.top_bar.setObjectName('top_bar')
+        self.top_bar.setFixedSize(180, 15)
+
+        self.text_display = TextDisplay(self.central_frame)
+
+        self.navigator = HelpNavigator(self.central_frame)
+
+        self.navigator.next_signal.connect(self.text_display.setCurrentIndex)
+        self.navigator.close_signal.connect(self.close)
+        self.text_display.noticed_checked.connect(self.noticed_check)
+
+        navi_box = QHBoxLayout()
+        navi_box.addStretch(1)
+        navi_box.addWidget(self.navigator)
+        navi_box.addStretch(1)
+
+        main_box = QVBoxLayout()
+        main_box.addWidget(self.top_bar)
+        main_box.addSpacing(15)
+        main_box.addWidget(self.text_display)
+        main_box.addSpacing(5)
+        main_box.addLayout(navi_box)
+        main_box.addSpacing(15)
+        main_box.setStretch(1, 1)
+        main_box.setSpacing(0)
+        main_box.setContentsMargins(0, 0, 0, 0)
+
+        self.central_frame.setLayout(main_box)
+
+        self.setStyleSheet(self.help_qss)
+
+    def noticed_check(self, is_checked: bool):
+        self.noticed = is_checked
+
+    def closeEvent(self, event):
+        if self.noticed:
+            config_file = open('./.config', 'w')
+            config_file.write('noticed:1')
+            config_file.close()
 
 
 class PlayButton(QLabel):
@@ -210,7 +380,7 @@ class VolumeControl(QSlider):
         self.setOrientation(Qt.Horizontal)
         self.setMinimum(0)
         self.setMaximum(100)
-        self.setValue(50)
+        self.setValue(65)
         self.setFixedSize(120, 7)
 
 
@@ -378,4 +548,7 @@ if __name__ == '__main__':
     app = QApplication()
     main_window = MainWindow(app)
     main_window.show()
+    if SHOW_HELP:
+        help_pad = HelpPad(app)
+        help_pad.show()
     sys.exit(app.exec_())
